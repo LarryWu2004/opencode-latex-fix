@@ -26,6 +26,8 @@ interface Delimiter {
   close: string
   display: boolean
   dollar: boolean
+  /** Markdown removed the escaping backslash before this delimiter. */
+  normalized?: boolean
 }
 
 const DELIMITERS: readonly Delimiter[] = [
@@ -33,6 +35,8 @@ const DELIMITERS: readonly Delimiter[] = [
   { open: "\\(", close: "\\)", display: false, dollar: false },
   { open: "$$", close: "$$", display: true, dollar: true },
   { open: "$", close: "$", display: false, dollar: true },
+  { open: "[", close: "]", display: true, dollar: false, normalized: true },
+  { open: "(", close: ")", display: false, dollar: false, normalized: true },
 ]
 
 function escaped(input: string, index: number): boolean {
@@ -54,12 +58,32 @@ function validDollarClose(input: string, index: number, length: number): boolean
   return next === undefined || !/\d/.test(next)
 }
 
+function findBalancedClose(input: string, delimiter: Delimiter, start: number): number {
+  let depth = 0
+  for (let cursor = start; cursor < input.length; cursor++) {
+    if (escaped(input, cursor)) continue
+    if (input[cursor] === delimiter.open) depth++
+    if (input[cursor] !== delimiter.close) continue
+    if (depth === 0) return cursor
+    depth--
+  }
+  return -1
+}
+
+function looksLikeTex(value: string): boolean {
+  // Plain brackets and parentheses are ambiguous after Markdown processing.
+  // Require explicit TeX structure so links, prose and numeric ranges stay text.
+  return /\\[A-Za-z]+/.test(value) || /[_^]/.test(value)
+}
+
 function findClose(
   input: string,
   delimiter: Delimiter,
   start: number,
   singleDollar: boolean,
 ): number {
+  if (delimiter.normalized) return findBalancedClose(input, delimiter, start)
+
   let cursor = start
   while (cursor < input.length) {
     const index = input.indexOf(delimiter.close, cursor)
@@ -107,6 +131,7 @@ export function parseMathText(input: string, options: MathParserOptions = {}): M
       const end = close + delimiter.close.length
       if (!value.trim() || value.length > maxFormulaLength) continue
       if (delimiter.open === "$" && /[\r\n]/.test(value)) continue
+      if (delimiter.normalized && !looksLikeTex(value)) continue
 
       pushText(segments, input.slice(textStart, cursor))
       segments.push({

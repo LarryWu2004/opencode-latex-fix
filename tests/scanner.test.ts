@@ -44,6 +44,17 @@ describe("MathScanner", () => {
     expect(formula?.querySelector(".katex-display")).not.toBeNull()
   })
 
+  it("renders the Gaussian integral after Markdown strips delimiter backslashes", () => {
+    const paragraph = document.createElement("p")
+    paragraph.textContent = String.raw`[ \int_{0}^{\infty} e^{-x^2}\,\mathrm{d}x=\frac{\sqrt{\pi}}{2} ]`
+    document.body.appendChild(paragraph)
+    scanner.start()
+
+    const formula = paragraph.querySelector("[data-opencode-math='display']")
+    expect(formula).not.toBeNull()
+    expect(formula?.querySelector(".katex-display")).not.toBeNull()
+  })
+
   it("waits for a closing delimiter during streaming", async () => {
     const paragraph = document.createElement("p")
     const text = document.createTextNode(String.raw`结果 \[x^2`)

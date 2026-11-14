@@ -57,4 +57,27 @@ describe("parseMathText", () => {
       { type: "text", value: String.raw`\[x^2\]` },
     ])
   })
+
+  it("parses display math after Markdown removes delimiter backslashes", () => {
+    const input = String.raw`[ \int_{0}^{\infty} e^{-x^2}\,\mathrm{d}x=\frac{\sqrt{\pi}}{2} ]`
+    expect(math(input)).toHaveLength(1)
+    expect(math(input)[0]).toMatchObject({
+      value: String.raw` \int_{0}^{\infty} e^{-x^2}\,\mathrm{d}x=\frac{\sqrt{\pi}}{2} `,
+      display: true,
+    })
+  })
+
+  it("parses structured inline math after Markdown removes backslashes", () => {
+    expect(math("质能方程为 (E=mc^2)")[0]).toMatchObject({ value: "E=mc^2", display: false })
+  })
+
+  it("supports nested brackets in normalized TeX", () => {
+    expect(math(String.raw`[\sqrt[3]{x}]`)[0]).toMatchObject({ value: String.raw`\sqrt[3]{x}` })
+  })
+
+  it("does not turn ordinary brackets, links, ranges or prose into math", () => {
+    expect(math("[普通链接](https://example.com)")).toHaveLength(0)
+    expect(math("区间 [0,1] 和说明（普通文字）")).toHaveLength(0)
+    expect(math("ordinary (parentheses) stay text")).toHaveLength(0)
+  })
 })
