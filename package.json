@@ -1,0 +1,53 @@
+{
+  "name": "opencode-latex-fix",
+  "version": "0.1.0",
+  "description": "Render LaTeX math directly in OpenCode Desktop conversations",
+  "type": "module",
+  "exports": {
+    "./gui-experimental": "./dist/gui-experimental.cjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.3.0",
+    "katex": "^0.19.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "jsdom": "^26.1.0",
+    "solid-js": "^1.9.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vite-plugin-solid": "^2.11.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "latex",
+    "katex",
+    "desktop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LarryWu2004/opencode-latex-fix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LarryWu2004/opencode-latex-fix/issues"
+  },
+  "homepage": "https://github.com/LarryWu2004/opencode-latex-fix#readme",
+  "license": "MIT"
+}
