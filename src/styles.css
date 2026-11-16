@@ -1,6 +1,9 @@
 .oc-math {
   color: inherit;
   max-width: 100%;
+  font-style: normal;
+  font-weight: 400;
+  text-decoration: none;
 }
 
 .oc-math--inline {

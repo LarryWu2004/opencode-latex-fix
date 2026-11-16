@@ -1,4 +1,4 @@
-import { parseMathText, type MathParserOptions } from "./parser"
+import { parseMathText, type MathParserOptions, type MathSegment } from "./parser"
 import { createMathElement, type MathRenderOptions } from "./renderer"
 
 const SHOW_TEXT = 4
@@ -16,14 +16,29 @@ const SKIP_SELECTOR = [
   "[data-opencode-math]",
   ".katex",
 ].join(",")
+const CONTAINER_SELECTOR = "p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6,div"
+
+interface BindingGroup {
+  root: Element
+  nodes: Text[]
+  generated: Node[]
+}
 
 interface TextBinding {
   /** Original host value before this plugin changed the text node. */
   source: string
-  /** The suffix left in the original host-owned text node. */
+  /** The value left in the original host-owned text node. */
   renderedValue: string
-  /** Prefix, formula and separator nodes inserted before the host text node. */
+  /** Display nodes owned by this binding or binding group. */
   generated: Node[]
+  /** Present when one formula spans multiple host text nodes. */
+  group?: BindingGroup
+}
+
+interface TextEntry {
+  node: Text
+  start: number
+  end: number
 }
 
 export interface MathScannerOptions extends MathParserOptions, MathRenderOptions {
@@ -39,9 +54,9 @@ function skipped(node: Node): boolean {
 /**
  * Enhances rendered Markdown without changing OpenCode's session data.
  *
- * The original Text object remains in place because Solid may retain and update
- * it while a message streams. Generated nodes are inserted before it and are
- * removed whenever the host writes a new value into that Text object.
+ * Original Text objects remain in place because Solid may retain and update
+ * them while a message streams. Generated nodes are removed whenever the host
+ * writes a new value into any text node owned by the same formula.
  */
 export class MathScanner {
   private readonly root: Document | Element
@@ -123,17 +138,22 @@ export class MathScanner {
   }
 
   private pruneDisconnected(): void {
-    for (const node of this.bindings.keys()) {
-      if (!node.isConnected) this.bindings.delete(node)
+    for (const node of Array.from(this.bindings.keys())) {
+      if (!node.isConnected) this.restore(node, false)
     }
   }
 
-  private scanWithin(root: ParentNode): void {
-    if (root.nodeType === 1 && skipped(root)) return
+  private textNodes(root: ParentNode): Text[] {
     const walker = this.document.createTreeWalker(root, SHOW_TEXT)
     const nodes: Text[] = []
     while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-    for (const node of nodes) this.scanText(node)
+    return nodes
+  }
+
+  private scanWithin(root: Document | Element): void {
+    if (root.nodeType === 1 && skipped(root)) return
+    for (const node of this.textNodes(root)) this.scanText(node)
+    this.scanContainers(root)
   }
 
   private scanText(node: Text): void {
@@ -179,11 +199,109 @@ export class MathScanner {
     node.data = suffix
   }
 
+  /** Reconstruct a formula that Markdown split across inline or block nodes. */
+  private scanContainers(root: Document | Element): void {
+    const containers: Element[] = []
+    if (root.nodeType === 1 && (root as Element).matches(CONTAINER_SELECTOR)) containers.push(root as Element)
+    containers.push(...Array.from(root.querySelectorAll<Element>(CONTAINER_SELECTOR)))
+
+    // Preorder is parents before children. Reverse it so the nearest suitable
+    // message container gets the first chance to render an incomplete formula.
+    for (const container of containers.reverse()) {
+      if (!container.isConnected || skipped(container)) continue
+      const nodes = this.textNodes(container).filter(
+        (node) => node.data && node.isConnected && !this.generated.has(node) && !skipped(node),
+      )
+      if (nodes.length < 2 || nodes.some((node) => this.bindings.has(node))) continue
+
+      const entries: TextEntry[] = []
+      let combined = ""
+      for (const node of nodes) {
+        const start = combined.length
+        combined += node.data
+        entries.push({ node, start, end: combined.length })
+      }
+      const hasDelimiter =
+        combined.includes("\\[") ||
+        combined.includes("\\(") ||
+        combined.includes("[") ||
+        combined.includes("(") ||
+        combined.includes("$")
+      if (!/\\[A-Za-z]+|[_^$]/.test(combined) || !hasDelimiter) continue
+
+      const segments = parseMathText(combined, this.options)
+      const candidates: {
+        math: MathSegment
+        start: TextEntry
+        end: TextEntry
+        startOffset: number
+        endOffset: number
+      }[] = []
+      let offset = 0
+      for (const segment of segments) {
+        const length = segment.type === "math" ? segment.source.length : segment.value.length
+        if (segment.type === "math") {
+          const startPosition = offset
+          const endPosition = offset + length
+          const start = entries.find((entry) => startPosition >= entry.start && startPosition < entry.end)
+          const end = entries.find((entry) => endPosition - 1 >= entry.start && endPosition - 1 < entry.end)
+          if (start && end && start.node !== end.node) {
+            candidates.push({ math: segment, start, end, startOffset: startPosition, endOffset: endPosition })
+          }
+        }
+        offset += length
+      }
+
+      // Keep the cross-node path deliberately conservative. Multiple formulas
+      // in one fragmented container remain source rather than risking reordering.
+      if (candidates.length !== 1) continue
+      const { math, start, end, startOffset, endOffset } = candidates[0]
+      if (!start.node.parentNode) continue
+
+      let formula: HTMLSpanElement
+      try {
+        formula = createMathElement(this.document, math.value, math.display, math.source, this.options)
+      } catch {
+        continue
+      }
+
+      const affected = entries.filter((entry) => entry.end > startOffset && entry.start < endOffset)
+      const group: BindingGroup = { root: container, nodes: affected.map((entry) => entry.node), generated: [formula] }
+      const values = affected.map((entry) => {
+        const source = entry.node.data
+        let renderedValue = ""
+        if (entry === start) renderedValue = source.slice(0, startOffset - entry.start)
+        else if (entry === end) renderedValue = source.slice(endOffset - entry.start)
+        return { entry, source, renderedValue }
+      })
+
+      this.generated.add(formula)
+      start.node.parentNode.insertBefore(formula, start.node.nextSibling)
+      for (const { entry, source, renderedValue } of values) {
+        this.bindings.set(entry.node, { source, renderedValue, generated: group.generated, group })
+        entry.node.data = renderedValue
+      }
+    }
+  }
+
   private restore(node: Text, restoreSource: boolean): void {
-    const binding = this.bindings.get(node)
-    if (!binding) return
-    this.bindings.delete(node)
-    for (const generated of binding.generated) generated.parentNode?.removeChild(generated)
-    if (restoreSource && node.data === binding.renderedValue) node.data = binding.source
+    const initial = this.bindings.get(node)
+    if (!initial) return
+    const group = initial.group
+    const nodes = group?.nodes ?? [node]
+    const owned = nodes
+      .map((current) => ({ current, binding: this.bindings.get(current) }))
+      .filter((value): value is { current: Text; binding: TextBinding } => value.binding != null)
+
+    for (const current of nodes) this.bindings.delete(current)
+    for (const generated of initial.generated) generated.parentNode?.removeChild(generated)
+    for (const { current, binding } of owned) {
+      // Preserve the one value just written by the host; restore every other
+      // member so the complete source can be parsed again as a group.
+      if ((restoreSource || current !== node) && current.data === binding.renderedValue) {
+        current.data = binding.source
+      }
+    }
+    if (group && this.active && group.root.isConnected) this.schedule(group.root)
   }
 }

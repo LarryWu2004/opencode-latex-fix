@@ -100,6 +100,55 @@ describe("MathScanner", () => {
     expect(message.querySelectorAll("[data-opencode-math]")).toHaveLength(2)
   })
 
+  it("renders a formula split across inline elements and a line break", () => {
+    const paragraph = document.createElement("p")
+    const opening = document.createTextNode(String.raw`[ \frac{R_i}{L_{ii}}`)
+    const emphasis = document.createElement("strong")
+    emphasis.appendChild(opening)
+    const closing = document.createTextNode(String.raw`P_i-\sum_j\widetilde w_{ij}P_j. ]`)
+    paragraph.append(emphasis, document.createElement("br"), closing)
+    document.body.appendChild(paragraph)
+
+    scanner.start()
+    expect(paragraph.querySelectorAll("[data-opencode-math='display']")).toHaveLength(1)
+
+    scanner.stop()
+    expect(paragraph.textContent).toBe(String.raw`[ \frac{R_i}{L_{ii}}P_i-\sum_j\widetilde w_{ij}P_j. ]`)
+  })
+
+  it("renders a formula split across paragraph nodes", () => {
+    const message = document.createElement("div")
+    const first = document.createElement("p")
+    first.textContent = String.raw`[ \frac{R_i}{L_{ii}}`
+    const second = document.createElement("p")
+    second.textContent = String.raw`P_i-\sum_j\widetilde w_{ij}P_j. ]`
+    message.append(first, second)
+    document.body.appendChild(message)
+    scanner.start()
+
+    expect(message.querySelectorAll("[data-opencode-math='display']")).toHaveLength(1)
+  })
+
+  it("re-renders a fragmented formula when its host opening node changes", async () => {
+    const paragraph = document.createElement("p")
+    const opening = document.createTextNode(String.raw`[ \frac{R_i}{L_{ii}}`)
+    const emphasis = document.createElement("em")
+    emphasis.appendChild(opening)
+    const closing = document.createTextNode(String.raw`P_i-\sum_j\widetilde w_{ij}P_j. ]`)
+    paragraph.append(emphasis, closing)
+    document.body.appendChild(paragraph)
+    scanner.start()
+    expect(paragraph.querySelectorAll("[data-opencode-math]")).toHaveLength(1)
+
+    opening.data = String.raw`[ \frac{A_i}{L_{ii}}`
+    await settle(scanner)
+    await settle(scanner)
+    expect(paragraph.querySelectorAll("[data-opencode-math]")).toHaveLength(1)
+    expect(paragraph.querySelector("[data-opencode-math]")?.getAttribute("data-opencode-math-source")).toContain(
+      String.raw`\frac{A_i}{L_{ii}}`,
+    )
+  })
+
   it("skips code, editable content and prices", async () => {
     const container = document.createElement("div")
     container.innerHTML = String.raw`<pre>\(x^2\)</pre><code>\(y^2\)</code><p contenteditable="true">\(z^2\)</p><p>Costs $5 and $10</p>`
